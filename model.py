@@ -15,113 +15,140 @@ from tensorflow.contrib.learn.python.learn.datasets import mnist
 from resnet import basic_resnet
 from layers import batch_norm
 from activation import lrelu
+LAMBDA = 10 # Gradient penalty lambda hyperparameter
 
 class patchGAN(object):
-    def __init__(self, sess, batch_size=4, dataset_name='nyu_depth_v2', sample_size=100):
+    def __init__(self, sess, batch_size=4, dataset_name='mnist', mode='dcgan', sample_size=100, z_dim=100, learning_rate=1e-3, beta1=0.5):
         self.sess = sess
+        self.batch_size = batch_size
         self.dataset_name = dataset_name
+        self.mode = mode
         self.sample_size = sample_size
+        if self.dataset_name == 'mnist':
+            self.data_h = 28
+            self.data_w = 28
+            self.data_c = 1
+        
+        self.z_dim = z_dim
+        self.learning_rate = learning_rate
+        self.beta1 = beta1
         tfrecord_name = [r'E:\nyudepth\tfrecord\test_list\classroom_0001.tfrecord', r'E:\nyudepth\tfrecord\test_list\dining_room_0026.tfrecord']
         filename_queue  = tf.train.string_input_producer(tfrecord_name, shuffle=True)
         self.img_batch, self.depth_batch, self.norm_batch, self.mask_batch = generate_batch(filename_queue, min_queue_examples=1000, batch_size=batch_size)         
         
-    def encoder(self, x, train=True, reuse=False):
-        with tf.variable_scope('encoder', reuse=reuse) as scope:
-            net = {}
-            net['resnet_1'] = basic_resnet(x, 16, [3, 3], first_activation=lrelu, last_activation=None, 
-                                        preactive=False, train=train, downsample=False, projection=True, name='resnet_1')
-            net['resnet_2'] = basic_resnet(net['resnet_1'], 32, [3, 3], first_activation=lrelu, last_activation=lrelu, 
-                                        preactive=True, train=train, downsample=True, projection=True, name='resnet_2')
-            net['resnet_3'] = basic_resnet(net['resnet_2'], 64, [3, 3], first_activation=lrelu, last_activation=lrelu, 
-                                        preactive=True, train=train, downsample=True, projection=True, name='resnet_3')
-            net['resnet_4'] = basic_resnet(net['resnet_3'], 128, [3, 3], first_activation=lrelu, last_activation=lrelu, 
-                                        preactive=True, train=train, downsample=True, projection=True, name='resnet_4')   
-            net['resnet_5'] = basic_resnet(net['resnet_4'], 256, [3, 3], first_activation=lrelu, last_activation=lrelu, 
-                                        preactive=True, train=train, downsample=True, projection=True, name='resnet_5')   
+    
+    def generator(self, x, train=True, reuse=None):
+        with tf.variable_scope('generator', reuse=reuse) as scope:
+            with slim.arg_scope([slim.conv2d_transpose], activation_fn=lrelu, kernel_size=4, stride=2, 
+                                padding='SAME', normalizer_fn=batch_norm, normalizer_fn={'train': train}, trainable=train):
+                net = {}
+                net['fc'] = slim.fully_connected(x, 4*4*256, activation_fn=lrelu, 
+                                normalizer_fn=batch_norm, normalizer_fn={'train': train}, trainable=train, scope='fc')
+                net['fc'] = tf.reshape(net['fc'], [-1, 4, 4, 256])
+                net['deconv1'] = slim.conv2d_transpose(net['fc1'], 128, scope='deconv1')
+                net['deconv1'] = net['deconv1'][:, :7, :7, :]
+                net['deconv2'] = slim.conv2d_transpose(net['deconv1'], 64, scope='deconv2')
+                net['deconv3'] = slim.conv2d_transpose(net['deconv2'], 1, activation_fn=tf.nn.tanh, 
+                                                       normalizer_fn=None, normalizer_params=None, scope='deconv3')            
+            
+        return net
+
+    
+    def discriminator(self, x, train, reuse=None, mode='dcgan'):
+        if mode == 'wgan-gp': # without BN
+            with tf.variable_scope('discriminator', reuse=reuse) as scope: 
+                with slim.arg_scope([slim.conv2d], activation_fn=lrelu, kernel_size=3, stride=2, padding='SAME', trainable=train):
+                    net = {}
+                    net['conv1'] = slim.conv2d(x, 64, scope='conv1')
+                    net['conv2'] = slim.conv2d(net['conv1'], 128, scope='conv2')
+                    net['conv3'] = slim.conv2d(net['conv2'], 235, scope='conv3')
+                    net['conv3'] = slim.flatten(net['conv3'])
+                    net['fc'] = slim.fully_connected(net['conv3'], 1, activation_fn=None, trainable=train, scope='fc')                    
+                    
+        else:
+            with tf.variable_scope('discriminator', reuse=reuse) as scope: 
+                with slim.arg_scope([slim.conv2d], activation_fn=lrelu, kernel_size=3, stride=2, padding='SAME', 
+                                    normalizer_fn=batch_norm, normalizer_fn={'train': train}, trainable=train):
+                    net = {}
+                    net['conv1'] = slim.conv2d(x, 64, scope='conv1')
+                    net['conv2'] = slim.conv2d(net['conv1'], 128, scope='conv2')
+                    net['conv3'] = slim.conv2d(net['conv2'], 235, scope='conv3')
+                    net['conv3'] = slim.flatten(net['conv3'])
+                    net['fc'] = slim.fully_connected(net['conv3'], 1, activation_fn=None, trainable=train, scope='fc')
+                    
 
         return net
     
-    def generator(self, x, train=True, reuse=False):
-        with tf.variable_scope('generator', reuse=reuse) as scope:
-            net = {}
-            net['dconv_1'] = slim.conv2d_transpose(x, 128, [3, 3], stride=2, activation_fn=lrelu, 
-                                            normalizer_fn=batch_norm, trainable=train, scope='deconv_1')
-            net['dconv_2'] = slim.conv2d_transpose(net['dconv_1'], 64, [3, 3], stride=2, activation_fn=lrelu, 
-                                            normalizer_fn=batch_norm, trainable=train, scope='deconv_2')  
-            
-            # for depth
-            #net['depth_resnet'] = basic_resnet(net['deconv_2'], 64, [3, 3], first_activation=lrelu, last_activation=lrelu, 
-                                            #preactive=False, train=train, downsample=False, preactive=False, name='depth_resnet')
-            net['depth_dconv_3'] = slim.conv2d_transpose(net['dconv_2'], 32, [3, 3], stride=2, activation_fn=lrelu, 
-                                            normalizer_fn=batch_norm, trainable=train, scope='depth_dconv_3')
-            net['depth_dconv_4'] = slim.conv2d_transpose(net['depth_dconv_3'], 1, [3, 3], stride=2, activation_fn=lrelu, 
-                                                        normalizer_fn=batch_norm, trainable=train, scope='depth_dconv_4')     
-            
-            # for norm
-            #net['norm_resnet'] = basic_resnet(net['deconv_2'], 64, [3, 3], first_activation=lrelu, last_activation=lrelu, 
-                                            #preactive=False, train=train, downsample=False, preactive=False, name='norm_resnet')
-            net['norm_dconv_3'] = slim.conv2d_transpose(net['dconv_2'], 32, [3, 3], stride=2, activation_fn=lrelu, 
-                                            normalizer_fn=batch_norm, trainable=train, scope='norm_dconv_3')
-            net['norm_dconv_4'] = slim.conv2d_transpose(net['norm_dconv_3'], 3, [3, 3], stride=2, activation_fn=lrelu, 
-                                                        normalizer_fn=batch_norm, trainable=train, scope='norm_dconv_4')            
-            
-        return net
-    
-    def U_net(self, encoder_net, generator_net, train=True, reuse=False):
-        with tf.variable_scope('U_net', reuse=reuse) as scope:
-            with tf.variable_scope('share'):
-                generator_net['dconv_1'] = generator_net['dconv_1'] + slim.conv2d(encoder_net['resnet_4'], 128, [1, 1], 1, 
-                                         activation_fn=None, trainable=train, scope='skip_connection_1')
-                generator_net['dconv_2'] = generator_net['dconv_2'] + slim.conv2d(encoder_net['resnet_3'], 64, [1, 1], 1, 
-                                         activation_fn=None, trainable=train, scope='skip_connection_2')
-            
-            with tf.variable_scope('depth'):
-                generator_net['depth_dconv_3'] = generator_net['depth_dconv_3'] + slim.conv2d(encoder_net['resnet_2'], 32, [1, 1], 1, 
-                                         activation_fn=None, trainable=train, scope='skip_connection_depth_3')
-            
-            with tf.variable_scope('norm'):
-                generator_net['norm_dconv_3'] = generator_net['norm_dconv_3'] + slim.conv2d(encoder_net['resnet_2'], 32, [1, 1], 1, 
-                                         activation_fn=None, trainable=train, scope='skip_connection_norm_3')        
-    
-    
-    def discriminator(self, x, train, reuse=False):
-        with tf.variable_scope('discriminator', reuse=reuse) as scope: 
-            net = {}
-            net['conv_1'] = slim.conv2d(x, 16, [3, 3], 2, activation_fn=lrelu, normalizer_fn=batch_norm, trainable=train, scope='conv_1')
-            net['resnet_1'] = slim.conv2d(net['conv_1'], 32, [3, 3], 2, activation_fn=lrelu, normalizer_fn=batch_norm, trainable=train, scope='resnet_1')
-            
-        return net
-    
-    def bulid_model(self):        
+    def bulid_model(self, mode='dcgan'):        
         self.global_step = tf.Variable(0, trainable=False)
-        self.train = tf.placeholder(tf.bool, shape=[1], name='train')
+        self.z_input = tf.placeholder(tf.float32, shape=[None, self.z_dim], name='z_input')
+        self.data_true = tf.placeholder(tf.float32, shape=[None, self.data_h, self.data_w, self.data_c], name='data_true')
         
-        self.encoder_net = self.encoder(self.img_batch, train=True)
-        self.generator_net = self.generator(self.encoder_net['resnet_5'], train=True)
-        self.U_net(self.encoder_net, self.generator_net, train=True)
+        self.g_net = self.generator(self.z_input, train=True)
+        self.G = self.g_net['deconv3']
         
-        depth_diff = self.generator_net['depth_dconv_4'] - self.depth_batch
-        self.depth_loss = tf.reduce_mean(tf.reduce_mean(tf.square(depth_diff), axis=[1, 2, 3]) - 
-                                         0.5 * tf.square(tf.reduce_mean(depth_diff, axis=[1, 2, 3])), name='depth_loss')
+        self.d_net_ture = self.discriminator(self.data_true, train=True, reuse=True, mode=mode)
+        self.d_net_fake = self.discriminator(self.G, train=True, mode=mode)
+        self.D_true = self.d_net_ture['fc']
+        self.D_fake = self.d_net_fake['fc']
         
-        norm_normalization = tf.div(self.generator_net['norm_dconv_4'], 
-                                    tf.reduce_sum(tf.square(self.generator_net['norm_dconv_4']), -1, keep_dims=True))
+        self.d_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='discriminator')
+        self.g_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
         
-        norm_mul = tf.multiply(self.mask_batch, tf.multiply(norm_normalization, self.norm_batch))
-        
-        self.norm_loss = 1-tf.reduce_mean(tf.div(tf.reduce_sum(norm_mul, axis=[1, 2, 3]), tf.reduce_sum(self.mask_batch, axis=[1, 2, 3])), name='norm_loss')
-        
-        t_vars = tf.trainable_variables()
-        self.e_vars = [var for var in t_vars if 'encoder' in var.name]
-        self.g_vars = [var for var in t_vars if 'generator' in var.name]
-        self.u_share_vars = [var for var in t_vars if 'U_net/share' in var.name]
-        self.u_depth_vars = [var for var in t_vars if 'U_net/depth' in var.name]
-        self.u_norm_vars = [var for var in t_vars if 'U_net/norm' in var.name]
+        if mode == 'dcgan':
+            self.g_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_fake, tf.ones_like(self.D_fake)))
+            self.d_loss_true =  tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_true, tf.ones_like(self.D_true)))
+            self.d_loss_fake =  tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_fake, tf.zeros_like(self.D_fake))) 
+            self.d_loss = self.d_loss_true + self.d_loss_fake
             
-        self.decay_steps = 100
-        self.decay_rate = 0.9
+            tf.summary.scalar('d_loss_true', self.d_loss_true)
+            tf.summary.scalar('d_loss_fake', self.d_loss_fake)
+            
+            
+            self.d_optim = tf.train.AdamOptimizer(self.learning_rate, self.beta1).minimize(self.d_loss, 
+                                                global_step=self.global_step, var_list=self.d_vars)
+            self.g_optim = tf.train.AdamOptimizer(self.learning_rate, self.beta1).minimize(self.g_loss, var_list=self.g_vars)
+            
         
-    def train(self, config):
+        elif mode == 'wgan':
+            self.g_loss = -tf.reduce_mean(self.D_fake)
+            self.d_loss = tf.reduce_mean(self.D_fake) - tf.reduce_mean(self.D_true) 
+            self.d_optim = tf.train.RMSPropOptimizer(self.learning_rate).minimize(self.d_loss, var_list=self.d_vars) 
+            self.g_optim = tf.train.RMSPropOptimizer(self.learning_rate).minimize(self.g_loss, var_list=self.g_vars)
+            
+            clip_ops = []
+            for var in self.d_vars:
+                clip_bounds = [-.01, .01]
+                clip_ops.append(
+                    tf.assign(
+                        var, 
+                        tf.clip_by_value(var, clip_bounds[0], clip_bounds[1])
+                    )
+                )
+            clip_disc_weights = tf.group(*clip_ops)            
+        elif mode == 'wgan-gp':
+            self.g_loss = -tf.reduce_mean(self.D_fake)
+            self.d_loss = tf.reduce_mean(self.D_fake) - tf.reduce_mean(self.D_true)  
+            
+            # Gradient penalty
+            alpha = tf.random_uniform(shape=[self.batch_size, 1], minval=0., maxval=1.)
+            differences = self.G - self.data_true
+            interpolates = self.data_true + (alpha*differences)
+            gradients = tf.gradients(self.discriminator(interpolates, train=True, reuse=True, mode=mode)['fc'], [interpolates])[0]
+            slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
+            self.gradient_penalty = tf.reduce_mean((slopes-1.)**2)
+            
+            tf.summary.scalar('gradient_penalty', self.gradient_penalty)
+            
+            self.d_optim = tf.train.AdamOptimizer(self.learning_rate, self.beta1).minimize(self.d_loss + LAMBDA * self.gradient_penalty, 
+                                                global_step=self.global_step, var_list=self.d_vars)
+            self.g_optim = tf.train.AdamOptimizer(self.learning_rate, self.beta1).minimize(self.g_loss, var_list=self.g_vars)
+        
+        tf.summary.scalar('g_loss', self.g_loss)
+        tf.summary.scalar('d_loss', self.d_loss)
+        
+            
+    def train(self):
         self.bulid_model()
         lr = tf.train.exponential_decay(config.learning_rate, self.global_step, 
                                         self.decay_steps, self.decay_rate, staircase=True) 
@@ -165,17 +192,25 @@ class patchGAN(object):
                         os.path.join(checkpoint_dir, model_name),
                         global_step=step)
 
-    def load(self, checkpoint_dir):
-        print(" [*] Reading checkpoints...")
+    
+    def load(self, checkpoint_dir='checkpoints', step=None, verbose=True):
+        if verbose:
+            print(" [*] Reading checkpoints...")
 
+        checkpoint_dir = os.path.join(self.train_dir, checkpoint_dir)
         ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
         if ckpt and ckpt.model_checkpoint_path:
             ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
+            if step:
+                basename = ckpt_name.split('-')[0]
+                ckpt_name = '-'.join([basename, str(step)])
             self.saver.restore(self.sess, os.path.join(checkpoint_dir, ckpt_name))
-            print(" [*] Success to read {}".format(ckpt_name))
+            if verbose:
+                print(" [*] Success to read {}".format(ckpt_name))
             return True
         else:
-            print(" [*] Failed to find a checkpoint")
-            return False    
+            if verbose:
+                print(" [*] Failed to load checkpoint")
+            return False
         
         
