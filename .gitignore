@@ -1,7 +1,7 @@
 # Windows image file caches
 Thumbs.db
 ehthumbs.db
-
+.git-credentials
 # Folder config file
 Desktop.ini
 
