@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 from __future__ import division, print_function, absolute_import
-from six.moves import xrange
-import time
+
+
 import tensorflow as tf
 import numpy as np
 import os
 import sys
-from tensorflow.contrib import slim
+import time
 
-from nets import vgg16
+from six.moves import xrange
+from tensorflow.contrib import slim
+from tensorflow.contrib.learn.python.learn.datasets import mnist
+
 from resnet import basic_resnet
 from layers import batch_norm
 from activation import lrelu
-from nyu_v2_tfreader import generate_batch
-
 
 class patchGAN(object):
     def __init__(self, sess, batch_size=4, dataset_name='nyu_depth_v2', sample_size=100):
