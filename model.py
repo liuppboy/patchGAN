@@ -20,7 +20,8 @@ from activation import lrelu
 LAMBDA = 10 # Gradient penalty lambda hyperparameter
 
 class patchGAN(object):
-    def __init__(self, sess, batch_size=4, dataset_name='mnist', mode='dcgan', checkpoint_dir='checkpoints', summary_dir='summary', 
+    def __init__(self, sess, batch_size=4, dataset_name='mnist', mode='dcgan',
+                 checkpoint_dir='checkpoints', summary_dir='summary', 
                  sample_size=100, z_dim=100, learning_rate=1e-3, beta1=0.5):
         self.sess = sess
         self.batch_size = batch_size
@@ -44,11 +45,11 @@ class patchGAN(object):
     
     def generator(self, x, train=True, reuse=None):
         with tf.variable_scope('generator', reuse=reuse) as scope:
-            with slim.arg_scope([slim.conv2d_transpose], activation_fn=lrelu, kernel_size=4, stride=2, 
-                                padding='SAME', normalizer_fn=batch_norm, normalizer_fn={'train': train}, trainable=train):
+            with slim.arg_scope([slim.conv2d_transpose], activation_fn=lrelu, kernel_size=4, stride=2, padding='SAME', 
+                                normalizer_fn=batch_norm, normalizer_params={'train': train}, trainable=train):
                 net = {}
                 net['fc'] = slim.fully_connected(x, 4*4*256, activation_fn=lrelu, 
-                                normalizer_fn=batch_norm, normalizer_fn={'train': train}, trainable=train, scope='fc')
+                                normalizer_fn=batch_norm, normalizer_params={'train': train}, trainable=train, scope='fc')
                 net['fc'] = tf.reshape(net['fc'], [-1, 4, 4, 256])
                 net['deconv1'] = slim.conv2d_transpose(net['fc1'], 128, scope='deconv1')
                 net['deconv1'] = net['deconv1'][:, :7, :7, :]
@@ -73,7 +74,7 @@ class patchGAN(object):
         else:
             with tf.variable_scope('discriminator', reuse=reuse) as scope: 
                 with slim.arg_scope([slim.conv2d], activation_fn=lrelu, kernel_size=3, stride=2, padding='SAME', 
-                                    normalizer_fn=batch_norm, normalizer_fn={'train': train}, trainable=train):
+                                    normalizer_fn=batch_norm, normalizer_params={'train': train}, trainable=train):
                     net = {}
                     net['conv1'] = slim.conv2d(x, 64, scope='conv1')
                     net['conv2'] = slim.conv2d(net['conv1'], 128, scope='conv2')
@@ -102,9 +103,9 @@ class patchGAN(object):
         self.g_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
         
         if mode == 'dcgan':
-            self.g_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_fake, tf.ones_like(self.D_fake)))
-            self.d_loss_true =  tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_true, tf.ones_like(self.D_true)))
-            self.d_loss_fake =  tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_fake, tf.zeros_like(self.D_fake))) 
+            self.g_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_fake, labels=tf.ones_like(self.D_fake)))
+            self.d_loss_true =  tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_true, labels=tf.ones_like(self.D_true)))
+            self.d_loss_fake =  tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_fake, labels=tf.zeros_like(self.D_fake))) 
             self.d_loss = self.d_loss_true + self.d_loss_fake
             
             tf.summary.scalar('d_loss_true', self.d_loss_true)
