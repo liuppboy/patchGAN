@@ -2,7 +2,9 @@ import tensorflow as tf
 import numpy as np
 
 import tensorflow.contrib.slim as slim
+from collections import namedtuple
 
-x = tf.placeholder(tf.float32, shape=[None, 3, 3, 1])
-y = slim.conv2d_transpose(x, 64, kernel_size=3, stride=2)
+LossHandle = namedtuple("LossHandle", ["d_loss", "g_loss", "const_loss", "l1_loss",
+                                       "category_loss", "cheat_loss", "tv_loss"])
+
 a

@@ -15,15 +15,20 @@ from tensorflow.contrib.learn.python.learn.datasets import mnist
 from resnet import basic_resnet
 from layers import batch_norm
 from activation import lrelu
+
+
 LAMBDA = 10 # Gradient penalty lambda hyperparameter
 
 class patchGAN(object):
-    def __init__(self, sess, batch_size=4, dataset_name='mnist', mode='dcgan', sample_size=100, z_dim=100, learning_rate=1e-3, beta1=0.5):
+    def __init__(self, sess, batch_size=4, dataset_name='mnist', mode='dcgan', checkpoint_dir='checkpoints', summary_dir='summary', 
+                 sample_size=100, z_dim=100, learning_rate=1e-3, beta1=0.5):
         self.sess = sess
         self.batch_size = batch_size
         self.dataset_name = dataset_name
         self.mode = mode
+        self.checkpoint_dir = checkpoint_dir
         self.sample_size = sample_size
+        self.summary_dir = summary_dir
         if self.dataset_name == 'mnist':
             self.data_h = 28
             self.data_w = 28
@@ -81,6 +86,7 @@ class patchGAN(object):
     
     def bulid_model(self, mode='dcgan'):        
         self.global_step = tf.Variable(0, trainable=False)
+        
         self.z_input = tf.placeholder(tf.float32, shape=[None, self.z_dim], name='z_input')
         self.data_true = tf.placeholder(tf.float32, shape=[None, self.data_h, self.data_w, self.data_c], name='data_true')
         
@@ -133,10 +139,10 @@ class patchGAN(object):
             # Gradient penalty
             alpha = tf.random_uniform(shape=[self.batch_size, 1], minval=0., maxval=1.)
             differences = self.G - self.data_true
-            interpolates = self.data_true + (alpha*differences)
+            interpolates = self.data_true + alpha * differences
             gradients = tf.gradients(self.discriminator(interpolates, train=True, reuse=True, mode=mode)['fc'], [interpolates])[0]
-            slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
-            self.gradient_penalty = tf.reduce_mean((slopes-1.)**2)
+            slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=-1))
+            self.gradient_penalty = tf.reduce_mean(tf.square((slopes-1.)))
             
             tf.summary.scalar('gradient_penalty', self.gradient_penalty)
             
@@ -149,26 +155,17 @@ class patchGAN(object):
         
             
     def train(self):
-        self.bulid_model()
-        lr = tf.train.exponential_decay(config.learning_rate, self.global_step, 
-                                        self.decay_steps, self.decay_rate, staircase=True) 
-        tf.summary.scalar('learning_rate', lr)
+        self.bulid_model(mode=self.mode)
         
-        depth_optim = tf.train.AdamOptimizer(lr) \
-                          .minimize(self.depth_loss, global_step=self.global_step, var_list=self.e_vars+self.g_vars+self.u_share_vars+self.u_depth_vars)
-        norm_optim = tf.train.AdamOptimizer(lr) \
-                          .minimize(self.norm_loss, var_list=self.e_vars+self.g_vars+self.u_share_vars+self.u_norm_vars)
-        
-        init_op = tf.global_variables_initializer()
-        self.sess.run(init_op)
+        self.sess.run(tf.global_variables_initializer())
         
         if config.is_load_model:
-            if self.load(config.checkpoint_dir):
+            if self.load('/'.join([self.checkpoint_dir, self.dataset_name])):
                 print(" [*] Load SUCCESS")
             else:
                 print(" [!] Load failed...")
         
-        counter = self.sess.run(self.global_step) + 1
+        counter = self.sess.run(self.global_step)
         start_time = time.time()
         
         coord=tf.train.Coordinator()
@@ -182,8 +179,7 @@ class patchGAN(object):
             print('setp: %2d time: %4.4fs depth_loss: %.6f, norm_loss: %.6f' % (counter, time.time() - start_time, depth_loss, norm_loss))
 
 
-    def save(self, checkpoint_dir, step):
-        model_name = "DCGAN.model"
+    def save(self, checkpoint_dir, step, model_name='model'):
 
         if not os.path.exists(checkpoint_dir):
             os.makedirs(checkpoint_dir)
