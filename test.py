@@ -7,4 +7,6 @@ from collections import namedtuple
 LossHandle = namedtuple("LossHandle", ["d_loss", "g_loss", "const_loss", "l1_loss",
                                        "category_loss", "cheat_loss", "tv_loss"])
 
+np.random.seed(100)
+a = np.random.normal(size=[100])
 a
