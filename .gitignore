@@ -5,6 +5,11 @@ ehthumbs.db
 # Folder config file
 Desktop.ini
 
+# tensorflow model
+*.data-00000-of-00001
+*.index
+*.meta
+
 *.pyc
 
 # Recycle Bin used on file shares
