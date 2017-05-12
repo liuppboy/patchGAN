@@ -37,13 +37,10 @@ class DataFeeding(object):
             assert batch_size <= self.data_num
         end = self.index_in_epoch
         return [feature[start:end] for feature in self.features] if self.is_features_list else self.features[start:end]    
-    
-class DataFiles(object):
-    def __init__(self, filename_queue, read_and_decode):
-        '''Reading data from files
-        Arguments: 
-           filename_queue: a queue of filenames
-           read_and_decoder: a function that read and decoder the data
-        
-        '''
-        a
+
+def read_mnist_feed(data_dir='./datasets/mnist', dtype=np.float32, reshape=True):
+    from tensorflow.examples.tutorials.mnist import input_data
+    mnist_dataset = input_data.read_data_sets(data_dir, dtype=dtype, reshape=reshape, validation_size=0)
+    return mnist_dataset
+
+

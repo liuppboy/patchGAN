@@ -9,14 +9,14 @@ import time
 
 from six.moves import xrange
 from tensorflow.contrib import slim
-from tensorflow.examples.tutorials.mnist import input_data
+
 
 sys.path.append('../')
 from layers import batch_norm
 from activations import lrelu
 from utils import load_model, save_grid
-
-mnist_dataset = input_data.read_data_sets('../datasets/mnist', validation_size=0)
+from datasets import read_mnist_feed
+mnist_dataset = read_mnist_feed()
 
 
 class DCGAN(object):
