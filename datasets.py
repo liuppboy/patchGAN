@@ -58,7 +58,7 @@ def read_and_decode_mnist(filename_queue):
     #label = tf.cast(features['labels'], tf.int32)
     return image
 
-def generate_batch(filename_queue, min_queue_examples, batch_size, num_threads=16, shuffle=True):
+def generate_batch(filename_queue, min_queue_examples, batch_size, num_threads=8, shuffle=True):
     image = read_and_decode_mnist(filename_queue)
     image = tf.cast(image, tf.float32)
     image = image / 127.5 - 1

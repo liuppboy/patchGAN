@@ -16,10 +16,10 @@ from layers import batch_norm
 from activations import lrelu
 from utils import load_model, save_grid
 
-class DCGAN(object):
+class AIGAN(object):
     def __init__(self, sess, batch_size=32, iter_steps=100000, z_dim=100, learning_rate=1e-3, 
                  sample_size=100, beta1=0.5, is_load_model=False, dataset_name='mnist', 
-                 model_name='dcgan_model', checkpoint_dir='checkpoints', summary_dir='summary', 
+                 model_name='aigan_model', checkpoint_dir='checkpoints', summary_dir='summary', 
                  sample_dir='sample', read_mode='from_file'):
         '''
         read_mode: the method of reading data, 'feed' or 'from_file', latter one is more efficient.
@@ -96,6 +96,13 @@ class DCGAN(object):
                 net['conv1'] = slim.conv2d(x, 64, scope='conv1')
                 net['conv2'] = slim.conv2d(net['conv1'], 128, scope='conv2')
                 net['conv3'] = slim.conv2d(net['conv2'], 256, scope='conv3')
+                
+                # regression z
+                net['conv4'] = slim.conv2d(net['conv3'], 128, scope='conv4')
+                net['conv4'] = slim.flatten(net['conv4'])
+                net['z_regression'] = slim.fully_connected(net['conv4'], self.z_dim, activation_fn=None, trainable=train, scope='z_regression')
+                
+                # true or false
                 net['conv3'] = slim.flatten(net['conv3'])
                 net['fc'] = slim.fully_connected(net['conv3'], 1, activation_fn=None, trainable=train, scope='fc')
                     
@@ -109,6 +116,8 @@ class DCGAN(object):
         
         self.d_net_fake = self.discriminator(self.G, train=True)
         self.d_net_ture = self.discriminator(self.batch_data, train=True, reuse=True)
+        self.img_reconstruct = self.generator(self.d_net_ture['z_regression'], train=True, reuse=True)['deconv3']
+        
         self.D_true = self.d_net_ture['fc']
         self.D_fake = self.d_net_fake['fc']
         
@@ -125,6 +134,8 @@ class DCGAN(object):
         self.d_loss_true =  tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_true, labels=tf.ones_like(self.D_true)))
         self.d_loss_fake =  tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_fake, labels=tf.zeros_like(self.D_fake))) 
         self.d_loss = self.d_loss_true + self.d_loss_fake
+        self.z_regression_loss = tf.reduce_mean(tf.abs(self.z_input - self.d_net_fake['z_regression']), name='z_regression_loss')
+        self.autoencoder_loss = tf.reduce_mean(tf.square(self.batch_data - self.img_reconstruct), name='autoencoder_loss')
         
         tf.summary.scalar('d_loss_true', self.d_loss_true)
         tf.summary.scalar('d_loss_fake', self.d_loss_fake)
@@ -132,9 +143,9 @@ class DCGAN(object):
         tf.summary.scalar('d_loss', self.d_loss)        
         
         
-        self.d_optim = tf.train.AdamOptimizer(self.learning_rate, self.beta1).minimize(self.d_loss, 
+        self.d_optim = tf.train.AdamOptimizer(self.learning_rate, self.beta1).minimize(self.d_loss + self.z_regression_loss, 
                                             global_step=self.global_step, var_list=self.d_vars)
-        self.g_optim = tf.train.AdamOptimizer(self.learning_rate, self.beta1).minimize(self.g_loss, var_list=self.g_vars)
+        self.g_optim = tf.train.AdamOptimizer(self.learning_rate, self.beta1).minimize(self.g_loss + self.autoencoder_loss, var_list=self.g_vars)
         
     def sampler(self, sample_z):
         sample_fake_images = self.generator(sample_z, train=False, reuse=True)['deconv3']
