@@ -15,15 +15,15 @@ sys.path.append('../')
 from layers import batch_norm
 from activations import lrelu
 from utils import load_model, save_grid
-from datasets import read_mnist_feed
-mnist_dataset = read_mnist_feed()
-
 
 class DCGAN(object):
     def __init__(self, sess, batch_size=32, iter_steps=100000, z_dim=100, learning_rate=1e-3, 
                  sample_size=100, beta1=0.5, is_load_model=False, dataset_name='mnist', 
                  model_name='dcgan_model', checkpoint_dir='checkpoints', summary_dir='summary', 
-                 sample_dir='sample'):
+                 sample_dir='sample', read_mode='from_file'):
+        '''
+        read_mode: the method of reading data, 'feed' or 'from_file', latter one is more efficient.
+        '''
         self.sess = sess
         self.batch_size = batch_size
         self.iter_steps = iter_steps
@@ -47,17 +47,28 @@ class DCGAN(object):
         
         self.dataset_name = dataset_name
         self.model_name = model_name
+        self.read_mode = read_mode
         if self.dataset_name == 'mnist':
             self.data_h = 28
             self.data_w = 28
             self.data_c = 1
+            
+            if self.read_mode == 'feed':
+                from datasets import read_mnist_feed
+                self.dataset = read_mnist_feed('../datasets/mnist')
+                self.batch_data = tf.placeholder(tf.float32, shape=[None, self.data_h, self.data_w, self.data_c], name='batch_data')
+            elif self.read_mode == 'from_file':
+                from datasets import generate_batch
+                filename_queue = tf.train.string_input_producer(['../datasets/mnist/train.tfrecords'])
+                self.batch_data = generate_batch(filename_queue, 
+                                        min_queue_examples=5000, batch_size=self.batch_size)
+            else:
+                raise ValueError('No such mode!')
+                
         
         np.random.seed(100)
         self.sample_z = tf.constant(np.random.normal(size=[100, self.z_dim]).astype(np.float32)) 
-        
-        #tfrecord_name = [r'E:\nyudepth\tfrecord\test_list\classroom_0001.tfrecord', r'E:\nyudepth\tfrecord\test_list\dining_room_0026.tfrecord']
-        #filename_queue  = tf.train.string_input_producer(tfrecord_name, shuffle=True)
-        #self.img_batch, self.depth_batch, self.norm_batch, self.mask_batch = generate_batch(filename_queue, min_queue_examples=1000, batch_size=batch_size)         
+        self.z_input = tf.placeholder(dtype=tf.float32, shape=[None, self.z_dim], name='z_input')
         
     
     def generator(self, x, train=True, reuse=None):
@@ -93,13 +104,10 @@ class DCGAN(object):
     def bulid_model(self):        
         self.global_step = tf.Variable(0, trainable=False)
         
-        self.z_input = tf.placeholder(tf.float32, shape=[None, self.z_dim], name='z_input')
-        self.data_true = tf.placeholder(tf.float32, shape=[None, self.data_h, self.data_w, self.data_c], name='data_true')
-        
         self.g_net = self.generator(self.z_input, train=True)
         self.G = self.g_net['deconv3']
         
-        self.d_net_ture = self.discriminator(self.data_true, train=True, reuse=True)
+        self.d_net_ture = self.discriminator(self.batch_data, train=True, reuse=True)
         self.d_net_fake = self.discriminator(self.G, train=True)
         self.D_true = self.d_net_ture['fc']
         self.D_fake = self.d_net_fake['fc']
@@ -145,34 +153,54 @@ class DCGAN(object):
         start_step = self.sess.run(self.global_step)
         start_time = time.time()
         
-        coord=tf.train.Coordinator()
-        threads = tf.train.start_queue_runners(sess=self.sess, coord=coord)   
+        if self.read_mode == 'feed':
+            for step in range(start_step, self.iter_steps):
+                batch_data, _ = self.dataset.next_batch(self.batch_size)
+                batch_data = batch_data * 2 - 1.
+                batch_data = np.reshape(batch_data, [self.batch_size, 28, 28, 1])
+                batch_z = np.random.normal(size=[self.batch_size, self.z_dim])
+                _, _, d_loss, g_loss, d_loss_true, d_loss_fake = self.sess.run(
+                    [self.d_optim, self.g_optim, self.d_loss, self.g_loss, self.d_loss_true, self.d_loss_fake], 
+                feed_dict={self.z_input: batch_z, self.batch_data: batch_data})
         
-        
-        for step in range(start_step, self.iter_steps):
-            batch_data, _ = mnist_dataset.train.next_batch(self.batch_size)
-            batch_data = batch_data * 2 - 1.
-            batch_data = np.reshape(batch_data, [self.batch_size, 28, 28, 1])
-            batch_z = np.random.normal(size=[self.batch_size, self.z_dim])
-            _, _, d_loss, g_loss, d_loss_true, d_loss_fake = self.sess.run(
-                [self.d_optim, self.g_optim, self.d_loss, self.g_loss, self.d_loss_true, self.d_loss_fake], 
-            feed_dict={self.z_input: batch_z, self.data_true: batch_data})
-            if np.mod(step, 10) == 0:
-                print('step: %d time: %.6fs d_loss: %.6f, g_loss: %.6f, d_loss_true: %.6f, d_loss_fake: %.6f' % 
-                      (step, time.time() - start_time, d_loss, g_loss, d_loss_true, d_loss_fake))
-            
-            if np.mod(step, 100)==0:
-                summary_str = self.sess.run(merge_summary, feed_dict={self.z_input: batch_z, self.data_true: batch_data})
-                summary_writer.add_summary(summary_str, global_step=step)
+                if np.mod(step, 10) == 0:
+                    print('step: %d time: %.6fs d_loss: %.6f, g_loss: %.6f, d_loss_true: %.6f, d_loss_fake: %.6f' % 
+                          (step, time.time() - start_time, d_loss, g_loss, d_loss_true, d_loss_fake))
                 
-                sample_fake_images = self.sess.run(self.sample_fake_images)
-                sample_fake_images = (sample_fake_images + 1) * 127.5
-                save_path = '%s/step_%d.png' %(self.sample_dir, step)
-                save_grid(sample_fake_images.astype('uint8'), [10, 10], save_path)
-            
-            
-            if np.mod(step, 1000) == 0:
-                self.saver.save(self.sess, '/'.join([self.checkpoint_dir, self.model_name]), global_step=step)
+                if np.mod(step, 100)==0:
+                    summary_str = self.sess.run(merge_summary, feed_dict={self.z_input: batch_z, self.batch_data: batch_data})
+                    summary_writer.add_summary(summary_str, global_step=step)
+                    
+                    sample_fake_images = self.sess.run(self.sample_fake_images)
+                    sample_fake_images = (sample_fake_images + 1) * 127.5
+                    save_path = '%s/step_%d.png' %(self.sample_dir, step)
+                    save_grid(sample_fake_images.astype('uint8'), [10, 10], save_path)
+                
+                if np.mod(step, 1000) == 0:
+                    self.saver.save(self.sess, '/'.join([self.checkpoint_dir, self.model_name]), global_step=step)
+        elif self.read_mode == 'from_file':
+            coord=tf.train.Coordinator()
+            threads = tf.train.start_queue_runners(sess=self.sess, coord=coord) 
+            for step in range(start_step, self.iter_steps):
+                batch_z = np.random.normal(size=[self.batch_size, self.z_dim])
+                _, _, d_loss, g_loss, d_loss_true, d_loss_fake = self.sess.run(
+                    [self.d_optim, self.g_optim, self.d_loss, self.g_loss, self.d_loss_true, self.d_loss_fake], 
+                feed_dict={self.z_input: batch_z})
+                if np.mod(step, 10) == 0:
+                    print('step: %d time: %.6fs d_loss: %.6f, g_loss: %.6f, d_loss_true: %.6f, d_loss_fake: %.6f' % 
+                          (step, time.time() - start_time, d_loss, g_loss, d_loss_true, d_loss_fake))
+                
+                if np.mod(step, 100)==0:
+                    summary_str = self.sess.run(merge_summary, feed_dict={self.z_input: batch_z})
+                    summary_writer.add_summary(summary_str, global_step=step)
+                    
+                    sample_fake_images = self.sess.run(self.sample_fake_images)
+                    sample_fake_images = (sample_fake_images + 1) * 127.5
+                    save_path = '%s/step_%d.png' %(self.sample_dir, step)
+                    save_grid(sample_fake_images.astype('uint8'), [10, 10], save_path)
+                
+                if np.mod(step, 1000) == 0:
+                    self.saver.save(self.sess, '/'.join([self.checkpoint_dir, self.model_name]), global_step=step)            
                 
         
 
