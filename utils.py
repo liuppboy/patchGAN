@@ -2,7 +2,7 @@
 from __future__ import division, print_function, absolute_import
 import tensorflow as tf
 import numpy as np
-
+import os
 from scipy import misc
 
 def load_model(sess, saver, checkpoint_dir, step=None, verbose=True):
@@ -154,5 +154,12 @@ def visualize(sess, dcgan, config, option):
         new_image_set = [merge(np.array([images[idx] for images in image_set]), [10, 10]) \
                          for idx in range(64) + range(63, -1, -1)]
         make_gif(new_image_set, './samples/test_gif_merged.gif', duration=8)
+
+def add_gaussian_noise(shape, up_bound, down_bound, total_decay_step, step):
+    if tf.less(step, tf.convert_to_tensor(total_decay_step)) is tf.constant(True):
+        std = up_bound - step / total_decay_step * (up_bound - down_bound)
+    else:
+        std = down_bound
+    return tf.random_normal(shape, stddev=std)
 
 
